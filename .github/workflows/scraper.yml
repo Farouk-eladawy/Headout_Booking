@@ -10,6 +10,10 @@ jobs:
   scrape-and-sync:
     runs-on: ubuntu-latest
     
+    # Grant permissions for the bot to push code back to the repository
+    permissions:
+      contents: write
+    
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
