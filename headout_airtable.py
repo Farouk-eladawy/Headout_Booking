@@ -1,4 +1,4 @@
-﻿"""
+"""
 Headout Airtable Sync Manager
 """
 
