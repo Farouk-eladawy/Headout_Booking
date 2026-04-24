@@ -44,7 +44,7 @@ jobs:
         BROWSER_HEADLESS: "true"
       run: |
         # Using headout_run_full_scrape.py for a single complete run
-        python headout_run_full_scrape.py --pages 5 --limit 100
+        python headout_run_full_scrape.py --pages 10 --limit 200
 
     - name: Commit Database Changes
       run: |
