@@ -10,13 +10,15 @@ files_to_fix = [
 
 for file_path in files_to_fix:
     if os.path.exists(file_path):
-        with open(file_path, 'rb') as f:
-            content = f.read()
+        # Read with utf-8-sig to automatically handle BOMs
+        with open(file_path, 'r', encoding='utf-8-sig') as f:
+            content_str = f.read()
+            
+        # Clean any remaining ZERO WIDTH NO-BREAK SPACE characters
+        content_str = content_str.lstrip('\ufeff')
         
-        # Remove BOM if it exists
-        if content.startswith(b'\xef\xbb\xbf'):
-            with open(file_path, 'wb') as f:
-                f.write(content[3:])
-            print(f"Removed BOM from: {file_path}")
-        else:
-            print(f"No BOM found in: {file_path}")
+        # Write back as clean utf-8
+        with open(file_path, 'w', encoding='utf-8', newline='') as f:
+            f.write(content_str)
+            
+        print(f"Processed: {file_path}")
