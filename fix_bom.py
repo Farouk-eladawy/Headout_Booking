@@ -5,6 +5,7 @@ files_to_fix = [
     r"c:\Users\Aloosh2020\Downloads\New Project's\HeadoutSystem\headout_scraper.py",
     r"c:\Users\Aloosh2020\Downloads\New Project's\HeadoutSystem\headout_booking_scraper.py",
     r"c:\Users\Aloosh2020\Downloads\New Project's\HeadoutSystem\headout_continuous_run.py",
+    r"c:\Users\Aloosh2020\Downloads\New Project's\HeadoutSystem\requirements.txt",
 ]
 
 for file_path in files_to_fix:
