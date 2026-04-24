@@ -1,0 +1,15 @@
+venv/
+__pycache__/
+.pytest_cache/
+headout_browser_profile/
+headout_session.json
+headout_config.env
+logs/
+scraper_state.json
+debug_headless_page.html
+debug_output.txt
+debug_page_dump.html
+
+# Ignore large CSV exports but keep the DB for state
+data/bookings_export_*.csv
+data/bookings_export_*.xlsx

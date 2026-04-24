@@ -1,0 +1,54 @@
+name: Headout Scraper Sync
+
+on:
+  schedule:
+    # Run every 2 hours. Adjust the cron expression as needed.
+    - cron: '0 */2 * * *'
+  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
+
+jobs:
+  scrape-and-sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        # Fetch full history to ensure we can commit back to the repo
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        playwright install chromium
+
+    - name: Run Scraper
+      env:
+        # Fetch sensitive data from GitHub Secrets
+        HEADOUT_EMAIL: ${{ secrets.HEADOUT_EMAIL }}
+        HEADOUT_PASSWORD: ${{ secrets.HEADOUT_PASSWORD }}
+        AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+        AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+        AIRTABLE_TABLE: ${{ secrets.AIRTABLE_TABLE }}
+        BROWSER_HEADLESS: "true"
+      run: |
+        # Using headout_run_full_scrape.py for a single complete run
+        python headout_run_full_scrape.py --pages 5 --limit 100
+
+    - name: Commit Database Changes
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        
+        # Add the database so the scraper remembers what it synced for the next run
+        git add data/headout_bookings.db
+        
+        # Commit and push if there are changes
+        git diff --quiet && git diff --staged --quiet || (git commit -m "chore: Update scraper database state [skip ci]" && git push)
