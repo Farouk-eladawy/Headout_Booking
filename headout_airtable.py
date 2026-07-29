@@ -111,52 +111,30 @@ class HeadoutAirtableManager:
         
         if exp_date_str:
             try:
-                # Basic cleanup
+                from dateutil import parser as date_parser
+                from datetime import timedelta
+                
                 dt_str = exp_date_str.strip()
-                tm_str = (time_slot_str or "00:00 AM").strip()
+                tm_str = (time_slot_str or "00:00").strip()
                 
                 # Full string to parse
                 full_str = f"{dt_str} {tm_str}"
                 
-                # Expected formats
-                # Date: Dec 23, 2025
-                # Time: 04:00 AM
                 try:
-                    dt_obj = datetime.strptime(full_str, "%b %d, %Y %I:%M %p")
+                    # fuzzy=True helps ignore extra text like "AM/PM" if it's malformed,
+                    # or parses formats like "23 Dec 2025" flawlessly.
+                    dt_obj = date_parser.parse(full_str, fuzzy=True)
                 except ValueError:
-                    # Fallback if time format varies or date format varies
-                    # Try just date
-                    dt_obj = datetime.strptime(dt_str, "%b %d, %Y")
+                    # Fallback if time fails
+                    dt_obj = date_parser.parse(dt_str, fuzzy=True)
                 
-                # Format as ISO 8601
-                # Note: Headout times are typically in local time of the experience (e.g. Cairo EET)
-                # Airtable expects UTC by default for date fields.
-                # If the user sees a 2-hour difference (e.g. 07:00 becoming 09:00), it means Airtable is interpreting
-                # the time as UTC and displaying it in local time, OR vice versa.
-                # Cairo is UTC+2 (or UTC+3 in summer).
-                # If we send "2026-01-09T07:00:00", Airtable stores it as 07:00 UTC.
-                # If the user views it in Cairo (UTC+2), they see 09:00. This matches the user's report (2 hours increase).
-                # To fix this, we should interpret the scraped time as Cairo time, then convert to UTC before sending,
-                # OR send it with the correct offset so Airtable handles it.
-                # However, a simpler hack if we want it to *appear* as 07:00 in Airtable (regardless of timezone settings sometimes)
-                # is to assume the scraper is running in the same timezone or just pass it as a naive string if Airtable allowed,
-                # but Airtable API requires ISO.
-                #
-                # Correction: The user says "difference is 2 hours increase".
-                # Scraped: 07:00 AM. Airtable shows: 09:00.
-                # This confirms Airtable thinks the input "07:00" is UTC, and displays it as "09:00" (Cairo UTC+2).
-                # To make it display "07:00" in Cairo time, we need to send "05:00 UTC".
-                # So we need to subtract 2 hours from the parsed time before sending.
-                
-                from datetime import timedelta
                 # Subtract 2 hours to compensate for Cairo (UTC+2) display
-                # This assumes standard time. Daylight saving might need +3. 
-                # For a robust solution, we'd use timezone libraries, but a fixed -2 offset solves the immediate visual discrepancy.
+                # This ensures Airtable displays it correctly
                 dt_obj = dt_obj - timedelta(hours=2)
                 
                 date_trip_iso = dt_obj.isoformat()
             except Exception as e:
-                self.logger.warning(f"Failed to parse date for {booking.get('booking_id')}: {e}")
+                self.logger.warning(f"Failed to parse date for {booking.get('booking_id')}: {e} (Input: {exp_date_str})")
                 date_trip_iso = None
 
         # 5. Destination (des) Mapping

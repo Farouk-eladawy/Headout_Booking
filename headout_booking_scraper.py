@@ -33,12 +33,12 @@ class HeadoutBookingScraper:
                 pass
 
             # Try to find the tab by text content specifically
-            # Based on screenshot: "By Booking Date"
-            tab = page.locator("div[role='tablist'] button, div[role='tablist'] div[role='tab']").filter(has_text="By Booking Date").first
+            # It could be "By Booking Date" or "By booking date"
+            tab = page.locator("button, div[role='tab']").filter(has_text=re.compile(r"^By booking date$", re.I)).first
             
             if await tab.count() == 0:
                  # Fallback generic text search
-                 tab = page.locator("text='By Booking Date'").first
+                 tab = page.locator("text='By booking date'").first
             
             if await tab.count() > 0:
                 # Check if already active
@@ -107,19 +107,22 @@ class HeadoutBookingScraper:
                 text = (await headers.nth(i).inner_text() or "").lower().strip()
                 idx = i + 1 # nth-child is 1-based
                 
-                if "booking date" in text:
+                if "booking date" in text or "booked on" in text or "created" in text:
                     indices["booking_date"] = idx
-                elif "experience date" in text or "travel date" in text or "tour date" in text:
+                elif "experience date" in text or "travel date" in text or "tour date" in text or text == "date":
                     indices["experience_date"] = idx
-                elif "time" in text:
+                elif "time" in text or "slot" in text:
                     indices["time_slot"] = idx
-                elif "booking ref" in text or "booking id" in text or "reference" in text:
-                    indices["booking_id"] = idx
-                elif "experience" in text and "date" not in text: # Avoid matching Experience Date
-                    indices["experience_name"] = idx
-                elif "customer" in text or "guest" in text or "traveler" in text:
-                    indices["customer_name"] = idx
-                elif "pax" in text or "participants" in text:
+                elif "booking" in text or "ref" in text or "id" in text:
+                    if "date" not in text:
+                        indices["booking_id"] = idx
+                elif "experience" in text or "product" in text or "tour" in text:
+                    if "date" not in text:
+                        indices["experience_name"] = idx
+                elif "customer" in text or "guest" in text or "traveler" in text or "name" in text:
+                    if "experience" not in text and "product" not in text:
+                        indices["customer_name"] = idx
+                elif "pax" in text or "participant" in text or "people" in text:
                     indices["pax_number"] = idx
                 elif "net" in text and "price" in text:
                     indices["net_price"] = idx
@@ -174,10 +177,25 @@ class HeadoutBookingScraper:
     def _normalize_booking(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         import re
         booking_id = (row.get("booking_id") or "").strip()
+        
+        # Ensure it's a valid ID (Headout booking IDs are usually 7 to 9 digits, e.g. 33067019)
+        # We want to avoid treating phone numbers as booking IDs.
+        if booking_id and not re.match(r"^\d{6,10}$", booking_id):
+            # Try extracting just the digits if it's mixed with text
+            m = re.search(r"\b(\d{6,10})\b", booking_id)
+            booking_id = m.group(1) if m else ""
+
         if not booking_id:
             blob = " ".join(str(v) for v in row.values() if v)
-            m = re.search(r"\b(\d{6,})\b", blob)
-            booking_id = m.group(1) if m else None
+            # Find standalone numbers of length 7-9 (avoid phone numbers which might be 10+ digits or have +)
+            matches = re.findall(r"(?<!\+)(?<!\d)(\d{7,9})(?!\d)", blob)
+            if matches:
+                # Prefer 8-digit numbers if multiple exist, as Headout uses 8-digit mostly
+                eight_digits = [m for m in matches if len(m) == 8]
+                booking_id = eight_digits[0] if eight_digits else matches[0]
+            else:
+                booking_id = None
+                
         if not booking_id:
             return None
 
