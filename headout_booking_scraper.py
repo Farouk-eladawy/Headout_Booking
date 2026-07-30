@@ -558,9 +558,20 @@ class HeadoutBookingScraper:
             
             try:
                 while page_index < pages_limit and (limit is None or len(results) < limit):
-                    # Ensure table is loaded
+                    # Ensure table is loaded with actual data (skip skeleton rows)
                     try:
-                        await page.wait_for_selector("table tbody tr", timeout=10000)
+                        for _ in range(15):
+                            count = await page.locator("table tbody tr").count()
+                            if count > 0:
+                                # Get text of the first row to see if it's skeleton (skeleton usually has no text)
+                                first_row_text = await page.locator("table tbody tr").first.inner_text()
+                                if len(first_row_text.strip()) > 5:
+                                    break
+                            else:
+                                # Check if there is a no-data container
+                                if await page.locator("text='No data'").count() > 0 or await page.locator("text='No bookings'").count() > 0:
+                                    break
+                            await asyncio.sleep(1)
                     except Exception:
                         pass
                     
