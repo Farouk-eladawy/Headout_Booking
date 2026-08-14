@@ -7,7 +7,6 @@ import logging
 from typing import Dict, Optional
 import json
 from urllib.parse import quote
-from datetime import datetime
 
 
 class HeadoutAirtableManager:
@@ -103,38 +102,19 @@ class HeadoutAirtableManager:
         net_rate_str = f"${net_price}" if net_price is not None else None
 
         # 4. Date Trip Merge
-        # Merge Experience Date (e.g. "Dec 23, 2025") and Time Slot (e.g. "04:00 AM")
-        # Output ISO format: "2025-12-23T04:00:00.000Z" (Approx)
+        # Merge Experience Date (e.g. "Aug 14, 2026") and Time Slot (e.g. "08:00 PM")
+        # Interpret as Africa/Cairo local time, then send UTC to Airtable.
         exp_date_str = booking.get('experience_date')
         time_slot_str = booking.get('time_slot')
         date_trip_iso = None
         
         if exp_date_str:
             try:
-                from dateutil import parser as date_parser
-                from datetime import timedelta
-                
-                dt_str = exp_date_str.strip()
-                tm_str = (time_slot_str or "00:00").strip()
-                
-                # Full string to parse
-                full_str = f"{dt_str} {tm_str}"
-                
-                try:
-                    # fuzzy=True helps ignore extra text like "AM/PM" if it's malformed,
-                    # or parses formats like "23 Dec 2025" flawlessly.
-                    dt_obj = date_parser.parse(full_str, fuzzy=True)
-                except ValueError:
-                    # Fallback if time fails
-                    dt_obj = date_parser.parse(dt_str, fuzzy=True)
-                
-                # Subtract 2 hours to compensate for Cairo (UTC+2) display
-                # This ensures Airtable displays it correctly
-                dt_obj = dt_obj - timedelta(hours=2)
-                
-                date_trip_iso = dt_obj.isoformat()
+                from headout_datetime import cairo_local_to_airtable_iso
+
+                date_trip_iso = cairo_local_to_airtable_iso(exp_date_str, time_slot_str)
             except Exception as e:
-                self.logger.warning(f"Failed to parse date for {booking.get('booking_id')}: {e} (Input: {exp_date_str})")
+                self.logger.warning(f"Failed to parse date for {booking.get('booking_id')}: {e} (Input: {exp_date_str} {time_slot_str})")
                 date_trip_iso = None
 
         # 5. Destination (des) Mapping

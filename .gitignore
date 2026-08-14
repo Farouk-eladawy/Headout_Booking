@@ -1,4 +1,5 @@
 venv/
+venv_old/
 __pycache__/
 .pytest_cache/
 headout_browser_profile/
@@ -9,6 +10,9 @@ scraper_state.json
 debug_headless_page.html
 debug_output.txt
 debug_page_dump.html
+
+# Keep Gmail processor local only
+GmailProcessor/
 
 # Ignore large CSV exports but keep the DB for state
 data/bookings_export_*.csv

@@ -7,7 +7,6 @@ import logging
 from typing import Dict, Optional, List, Set
 import json
 from urllib.parse import quote
-from datetime import datetime, timedelta
 
 
 class HeadoutAirtableManager:
@@ -121,26 +120,9 @@ class HeadoutAirtableManager:
         
         if exp_date_str:
             try:
-                # Basic cleanup
-                dt_str = exp_date_str.strip()
-                tm_str = (time_slot_str or "00:00 AM").strip()
-                
-                # Full string to parse
-                full_str = f"{dt_str} {tm_str}"
-                
-                try:
-                    dt_obj = datetime.strptime(full_str, "%b %d, %Y %I:%M %p")
-                except ValueError:
-                    # Fallback
-                    dt_obj = datetime.strptime(dt_str, "%b %d, %Y")
-                
-                # Correction: The user says "difference is 2 hours increase".
-                # Scraped: 07:00 AM. Airtable shows: 09:00.
-                # To make it display "07:00" in Cairo time, we need to send "05:00 UTC".
-                from datetime import timedelta
-                dt_obj = dt_obj - timedelta(hours=2)
-                
-                date_trip_iso = dt_obj.isoformat()
+                from headout_datetime import cairo_local_to_airtable_iso
+
+                date_trip_iso = cairo_local_to_airtable_iso(exp_date_str, time_slot_str)
             except Exception as e:
                 self.logger.warning(f"Failed to parse date for {booking.get('booking_id')}: {e}")
                 date_trip_iso = None
