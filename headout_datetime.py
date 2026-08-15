@@ -93,6 +93,32 @@ def _parse_headout_datetime(date_str: str, time_str: Optional[str] = None) -> da
     return dt.replace(tzinfo=None)
 
 
+HEADOUT_DATE_RE = re.compile(
+    r"Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})",
+    re.IGNORECASE,
+)
+HEADOUT_TIME_RE = re.compile(
+    r"Time\s*:\s*(\d{1,2}:\d{2}\s*(?:AM|PM)?)",
+    re.IGNORECASE,
+)
+
+
+def extract_headout_email_datetime(email_body: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Headout confirmation emails put date and time on separate lines, e.g.
+      Date : August 14, 2026
+      Time: 08:00 PM
+    AI often returns the date only, which Airtable then shows as 00:00.
+    """
+    if not email_body:
+        return None, None
+    date_match = HEADOUT_DATE_RE.search(email_body)
+    time_match = HEADOUT_TIME_RE.search(email_body)
+    date_str = date_match.group(1).strip() if date_match else None
+    time_str = time_match.group(1).strip() if time_match else None
+    return date_str, time_str
+
+
 def cairo_local_to_airtable_iso(date_str: str, time_str: Optional[str] = None) -> Optional[str]:
     """
     Interpret date/time as Africa/Cairo local time and return UTC ISO for Airtable.

@@ -1,4 +1,4 @@
-from headout_datetime import cairo_local_to_airtable_iso
+from headout_datetime import cairo_local_to_airtable_iso, extract_headout_email_datetime
 
 
 def test_summer_dst_eight_pm():
@@ -16,3 +16,19 @@ def test_winter_offset():
 def test_iso_z_treated_as_cairo_wall_clock():
     assert cairo_local_to_airtable_iso("2026-08-14T20:00:00.000Z") == "2026-08-14T17:00:00.000Z"
     assert cairo_local_to_airtable_iso("2026-08-14T20:00:00+02:00") == "2026-08-14T17:00:00.000Z"
+
+
+def test_extract_date_time_from_headout_email():
+    email = """
+Hello Team, Greetings from Headout. The following reservation has been confirmed.
+Name: Mahmoud omar
+Phone: +201558505997
+Date : August 14, 2026
+Time: 08:00 PM
+Guest Numbers: 3 Adult, 1 Child
+The Headout reference number for this reservation is 33445926.
+"""
+    date_str, time_str = extract_headout_email_datetime(email)
+    assert date_str == "August 14, 2026"
+    assert time_str.upper() == "08:00 PM"
+    assert cairo_local_to_airtable_iso(date_str, time_str) == "2026-08-14T17:00:00.000Z"
