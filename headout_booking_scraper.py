@@ -682,6 +682,112 @@ class HeadoutBookingScraper:
             on_page_complete=on_page_complete
         )
 
+    async def _search_booking_id(self, page: Page, booking_id: str) -> bool:
+        import logging
+        logger = logging.getLogger("scraper_debug")
+        selectors = [
+            "input[placeholder*='Search' i]",
+            "input[placeholder*='search' i]",
+            "input[type='search']",
+            "input[aria-label*='Search' i]",
+            "input[name*='search' i]",
+        ]
+        for sel in selectors:
+            loc = page.locator(sel).first
+            if await loc.count() == 0:
+                continue
+            try:
+                await loc.click(timeout=3000)
+                await loc.fill("")
+                await loc.fill(booking_id)
+                await loc.press("Enter")
+                await page.wait_for_load_state("networkidle")
+                await asyncio.sleep(2.0)
+                logger.info(f"Searched Headout for {booking_id} via {sel}")
+                return True
+            except Exception as e:
+                logger.warning(f"Search via {sel} failed: {e}")
+        logger.error(f"No search box found for {booking_id}")
+        return False
+
+    async def repair_booking_ids(self, booking_ids: List[str]) -> Dict[str, Any]:
+        """Re-fetch specific Headout bookings and force-update Airtable."""
+        import logging
+        logger = logging.getLogger("scraper_debug")
+        wanted = {str(x).strip() for x in booking_ids if str(x).strip()}
+        report = {"updated": [], "skipped": [], "missing": [], "invalid": []}
+
+        async with async_playwright() as p:
+            bt = getattr(p, self.cfg.browser_engine)
+            context: BrowserContext = await bt.launch_persistent_context(
+                user_data_dir=self.cfg.user_data_dir,
+                channel=self.cfg.browser_channel,
+                headless=self.cfg.headless,
+                viewport={"width": 1920, "height": 1080},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            try:
+                dests = [
+                    self.cfg.portal_url or "",
+                    "https://hub.headout.com/dashboard/bookings/",
+                ]
+                for d in dests:
+                    if not d:
+                        continue
+                    try:
+                        await page.goto(d, timeout=60000)
+                        await page.wait_for_load_state("networkidle")
+                        await asyncio.sleep(2)
+                        break
+                    except Exception:
+                        continue
+
+                await self._login_if_needed(page)
+                await self._set_filters(page)
+
+                for booking_id in sorted(wanted):
+                    logger.info(f"Repairing {booking_id}...")
+                    found = None
+                    if await self._search_booking_id(page, booking_id):
+                        rows = await self._extract_rows(page)
+                        for r in rows:
+                            b = self._normalize_booking(r)
+                            if b and str(b.get("booking_id")) == booking_id:
+                                await self._augment_contact_details(page, r.get("row_index", 0), b)
+                                found = b
+                                break
+
+                    if not found:
+                        report["missing"].append(booking_id)
+                        logger.error(f"Booking {booking_id} not found on Headout")
+                        continue
+
+                    if row_looks_column_shifted(found):
+                        report["invalid"].append(booking_id)
+                        logger.error(
+                            f"Refusing to repair {booking_id}: still looks column-shifted "
+                            f"(experience_name={found.get('experience_name')!r}, status={found.get('status')!r})"
+                        )
+                        continue
+
+                    self.db.save_booking(found)
+                    res = self.airtable.upsert_booking(found, force_date_update=True)
+                    if res.get("success"):
+                        self.db.mark_synced(booking_id, res.get("recordid"))
+                        report["updated"].append(booking_id)
+                        logger.info(f"Repaired {booking_id}")
+                    else:
+                        report["skipped"].append(booking_id)
+                        logger.error(f"Airtable repair failed for {booking_id}: {res}")
+            finally:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+
+        return report
+
     def export_to_json(self, data: List[Dict[str, Any]], filename: str) -> None:
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)

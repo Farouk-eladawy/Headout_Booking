@@ -4,7 +4,16 @@ on:
   schedule:
     # Run every 2 hours. Adjust the cron expression as needed.
     - cron: '0 */2 * * *'
-  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      job_type:
+        description: 'scrape latest bookings, or repair the corrupted booking IDs'
+        type: choice
+        required: true
+        default: scrape
+        options:
+          - scrape
+          - repair
 
 jobs:
   scrape-and-sync:
@@ -42,9 +51,13 @@ jobs:
         AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
         AIRTABLE_TABLE: ${{ secrets.AIRTABLE_TABLE }}
         BROWSER_HEADLESS: "true"
+        JOB_TYPE: ${{ github.event.inputs.job_type || 'scrape' }}
       run: |
-        # Using headout_run_full_scrape.py for a single complete run
-        python headout_run_full_scrape.py --pages 10 --limit 200
+        if [ "$JOB_TYPE" = "repair" ]; then
+          python repair_corrupt_bookings.py
+        else
+          python headout_run_full_scrape.py --pages 10 --limit 200
+        fi
 
     - name: Commit Database Changes
       run: |
