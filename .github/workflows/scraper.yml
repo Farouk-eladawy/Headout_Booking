@@ -14,16 +14,6 @@ on:
         options:
           - scrape
           - repair
-      pages:
-        description: 'Hub pages to scrape (about 25 bookings each). Cron uses 10.'
-        type: number
-        required: false
-        default: 10
-      limit:
-        description: 'Max bookings this run. Cron uses 200. Raise this to repair more history.'
-        type: number
-        required: false
-        default: 200
 
 jobs:
   scrape-and-sync:
@@ -62,14 +52,16 @@ jobs:
         AIRTABLE_TABLE: ${{ secrets.AIRTABLE_TABLE }}
         BROWSER_HEADLESS: "true"
         JOB_TYPE: ${{ github.event.inputs.job_type || 'scrape' }}
-        PAGES_LIMIT: ${{ github.event.inputs.pages || 10 }}
-        TOTAL_LIMIT: ${{ github.event.inputs.limit || 200 }}
+        PAGES_LIMIT: ${{ secrets.PAGES_LIMIT }}
+        TOTAL_LIMIT: ${{ secrets.TOTAL_LIMIT }}
       run: |
-        echo "JOB_TYPE=$JOB_TYPE pages=$PAGES_LIMIT limit=$TOTAL_LIMIT"
+        PAGES="${PAGES_LIMIT:-10}"
+        LIMIT="${TOTAL_LIMIT:-200}"
+        echo "JOB_TYPE=$JOB_TYPE pages=$PAGES limit=$LIMIT"
         if [ "$JOB_TYPE" = "repair" ]; then
           python repair_corrupt_bookings.py
         else
-          python headout_run_full_scrape.py --pages "$PAGES_LIMIT" --limit "$TOTAL_LIMIT"
+          python headout_run_full_scrape.py --pages "$PAGES" --limit "$LIMIT"
         fi
 
     - name: Commit Database Changes

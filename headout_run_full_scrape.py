@@ -26,8 +26,8 @@ async def main():
     scraper = HeadoutBookingScraper(cfg)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pages', type=int, default=int(os.getenv('PAGES_LIMIT', '5')))
-    parser.add_argument('--limit', type=int, default=int(os.getenv('TOTAL_LIMIT', '100')))
+    parser.add_argument('--pages', type=int, default=int(os.getenv('PAGES_LIMIT', '10')))
+    parser.add_argument('--limit', type=int, default=int(os.getenv('TOTAL_LIMIT', '200')))
     args = parser.parse_args()
     pages_limit = args.pages
     per_total = args.limit
