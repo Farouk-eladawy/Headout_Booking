@@ -11,6 +11,7 @@ from playwright.async_api import async_playwright, Page, BrowserContext
 from headout_config import HeadoutConfig
 from headout_airtable import HeadoutAirtableManager
 from headout_database import HeadoutDatabase
+from headout_columns import match_column_indices, row_looks_column_shifted
 
 
 class HeadoutBookingScraper:
@@ -84,63 +85,29 @@ class HeadoutBookingScraper:
 
     async def _get_column_indices(self, page: Page) -> Dict[str, int]:
         """Dynamically find column indices based on header text"""
-        indices = {
-            "booking_date": 2,     # Default fallback
-            "experience_date": 3,  # Default fallback
-            "time_slot": 4,
-            "booking_id": 5,
-            "experience_name": 6,
-            "customer_name": 7,
-            "pax_number": 8,
-            "net_price": 9,
-            "retail_price": 10,
-            "status": 11,
-            "additional_details": 12
-        }
+        from headout_columns import DEFAULT_INDICES
+
+        indices = dict(DEFAULT_INDICES)
         
         try:
-            # Get all header cells
             headers = page.locator("table thead th")
             count = await headers.count()
             
             if count == 0:
                 return indices
 
+            texts = []
             for i in range(count):
-                text = (await headers.nth(i).inner_text() or "").lower().strip()
-                idx = i + 1 # nth-child is 1-based
-                
-                if "booking date" in text or "booked on" in text or "created" in text:
-                    indices["booking_date"] = idx
-                elif "experience date" in text or "travel date" in text or "tour date" in text or text == "date":
-                    indices["experience_date"] = idx
-                elif "time" in text or "slot" in text:
-                    indices["time_slot"] = idx
-                elif "booking" in text or "ref" in text or "id" in text:
-                    if "date" not in text:
-                        indices["booking_id"] = idx
-                elif "experience" in text or "product" in text or "tour" in text:
-                    if "date" not in text:
-                        indices["experience_name"] = idx
-                elif "customer" in text or "guest" in text or "traveler" in text or "name" in text:
-                    if "experience" not in text and "product" not in text:
-                        indices["customer_name"] = idx
-                elif "pax" in text or "participant" in text or "people" in text:
-                    indices["pax_number"] = idx
-                elif "net" in text and "price" in text:
-                    indices["net_price"] = idx
-                elif "retail" in text or "total" in text:
-                    indices["retail_price"] = idx
-                elif "status" in text:
-                    indices["status"] = idx
-                elif "details" in text or "additional" in text:
-                    indices["additional_details"] = idx
+                texts.append((await headers.nth(i).inner_text() or "").strip())
+
+            indices = match_column_indices(texts)
             
             import logging
             logger = logging.getLogger("scraper_debug")
+            logger.info(f"Table headers: {texts}")
             logger.info(f"Detected column indices: {indices}")
             
-        except Exception as e:
+        except Exception:
             pass
             
         return indices
@@ -157,7 +124,7 @@ class HeadoutBookingScraper:
             tr = body_rows.nth(i)
             async def cell_text(n: int) -> str:
                 try:
-                    cell = tr.locator(f"td:nth-child({n})")
+                    cell = tr.locator("td").nth(n - 1)
                     return ((await cell.inner_text()) or "").strip()
                 except Exception:
                     return ""
@@ -650,6 +617,12 @@ class HeadoutBookingScraper:
             logger.info(f"Processing batch of {len(batch)} bookings...")
             
             for b in batch:
+                if row_looks_column_shifted(b):
+                    logger.error(
+                        f"Skipping Airtable sync for {b.get('booking_id')}: "
+                        f"columns look shifted (experience_name={b.get('experience_name')!r}, status={b.get('status')!r})"
+                    )
+                    continue
                 # Idempotency Check
                 # 1. Fetch existing booking from DB
                 existing = self.db.get_booking(b['booking_id'])

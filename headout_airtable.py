@@ -7,6 +7,11 @@ import logging
 from typing import Dict, Optional
 import json
 from urllib.parse import quote
+from headout_columns import (
+    is_valid_customer_name,
+    is_valid_experience_name,
+    map_booking_status,
+)
 
 
 class HeadoutAirtableManager:
@@ -41,27 +46,9 @@ class HeadoutAirtableManager:
             'Content-Type': 'application/json'
         }
         
-        # 1. Status Transformation
-        raw_status = booking.get('status') or ''
-        status_map = {
-            'Success': 'Confirmed',
-            'SUCCESS': 'Confirmed',
-            'Cancelled': 'Canceled',
-            'CANCELLED': 'Canceled',
-            'Rescheduled': 'Changed',
-            'RESCHEDULED': 'Changed'
-        }
-        # Use case-insensitive check if exact match fails
-        status = status_map.get(raw_status)
-        if not status:
-            if raw_status.lower() == 'success':
-                status = 'Confirmed'
-            elif raw_status.lower() == 'cancelled':
-                status = 'Canceled'
-            elif raw_status.lower() == 'rescheduled':
-                status = 'Changed'
-            else:
-                status = raw_status
+        # 1. Status Transformation — only known Headout statuses.
+        # Never pass through values like "3 General" (typecast would create a new select option).
+        status = map_booking_status(booking.get('status'))
 
         # 2. PAX Parsing
         pax_str = booking.get('pax_details') or ''
@@ -129,11 +116,22 @@ class HeadoutAirtableManager:
         if any(keyword in exp_name for keyword in hurghada_keywords):
             destination = 'Hurghada'
 
+        exp_name = booking.get('experience_name')
+        if not is_valid_experience_name(exp_name):
+            self.logger.warning(
+                f"Ignoring invalid trip name for {booking.get('booking_id')}: {exp_name!r}"
+            )
+            exp_name = None
+
+        customer_name = booking.get('customer_name')
+        if not is_valid_customer_name(customer_name):
+            customer_name = None
+
         fields = {
             'des': destination,
             'Agency': 'Headout',
             'Booking Nr.': booking.get('booking_id'),
-            'trip Name': booking.get('experience_name'),
+            'trip Name': exp_name,
             'Option': booking.get('option'),
             
             # PAX Fields
@@ -158,7 +156,7 @@ class HeadoutAirtableManager:
             # Removed fields as requested: Booking Date
             # Removed separate fields: Experience Date, Time Slot (Merged into Date Trip)
             
-            'Customer Name': booking.get('customer_name'),
+            'Customer Name': customer_name,
             'Customer Phone': booking.get('customer_phone'),
             'Customer Email': booking.get('customer_email'),
         }
