@@ -87,6 +87,34 @@ class HeadoutBookingScraper:
     async def _set_filters(self, page: Page) -> None:
         await self._select_tab_booking_date(page)
 
+    async def _goto_next_page(self, page: Page) -> bool:
+        """Click Hub's Next page control. Returns False when there is no next page."""
+        import logging
+        logger = logging.getLogger("scraper_debug")
+        next_btn = page.get_by_role("button", name=re.compile(r"^next page$", re.I))
+        if await next_btn.count() == 0:
+            next_btn = page.locator(
+                'nav[aria-label*="agination" i] button[aria-label*="next" i], '
+                'button[aria-label="Next page"], button[title="Next page"]'
+            )
+        if await next_btn.count() == 0:
+            logger.info("No next-page button found; stopping pagination.")
+            return False
+        btn = next_btn.first
+        try:
+            if await btn.is_disabled():
+                logger.info("Next page is disabled; reached last page.")
+                return False
+        except Exception:
+            pass
+        await btn.click()
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+        await asyncio.sleep(2.0)
+        return True
+
     async def _get_column_indices(self, page: Page, cell_count: Optional[int] = None) -> Dict[str, int]:
         """Dynamically find column indices based on header text"""
         from headout_columns import DEFAULT_INDICES
@@ -508,37 +536,13 @@ class HeadoutBookingScraper:
                 # Try to click "Next" button start_page times
                 # This is a naive implementation but works for generic pagination
                 for _ in range(start_page):
-                    try:
-                        nav = page.locator('nav[aria-label="Pagination Navigation"] button')
-                        cnt = await nav.count()
-                        if cnt > 0:
-                            # Usually the last button or the "next" icon is what we want
-                            # Let's try to find a button with aria-label "Go to next page" or similar if possible
-                            # Or just assume the standard structure where next is towards end
-                            # For now, reusing the logic: click the one corresponding to next page
-                            # Wait, the previous logic was: nav.nth(min(page_index + 1, cnt - 1)).click()
-                            # If we are at page 0, we click index 1 (page 2) etc.
-                            
-                            # Optimized approach: check if we can click specific page number?
-                            # If not, just click next
-                            
-                            # Let's just use the 'Next' logic in loop
-                            await nav.last.click() # Assuming last button is Next or Last Page. Risk: It might be "Last Page" >>
-                            # Better: Look for svg icon usually indicating next
-                            # OR use the previous logic
-                            # await nav.nth(min(current_page + 1, cnt - 1)).click()
-                            
-                            await page.wait_for_load_state("networkidle")
-                            await asyncio.sleep(1.0)
-                        else:
-                            logger.warning("Pagination controls not found during skip.")
-                            break
-                    except Exception as e:
-                        logger.warning(f"Error skipping to page: {e}")
+                    if not await self._goto_next_page(page):
+                        logger.warning("Pagination controls not found during skip.")
                         break
                 current_page = start_page
 
             page_index = 0 # Relative index for the loop limit
+            total_scraped = 0
             
             # lightweight progress bar without hard dependency
             try:
@@ -553,7 +557,7 @@ class HeadoutBookingScraper:
                 pbar = _P()
             
             try:
-                while page_index < pages_limit and (limit is None or len(results) < limit):
+                while page_index < pages_limit and (limit is None or total_scraped < limit):
                     # Ensure table is loaded with actual data (skip skeleton rows)
                     try:
                         for _ in range(15):
@@ -583,10 +587,11 @@ class HeadoutBookingScraper:
                         await self._augment_contact_details(page, r.get("row_index", 0), b)
                         results.append(b)
                         current_page_bookings.append(b)
+                        total_scraped += 1
                         
                         if limit is not None:
                             pbar.update(1)
-                        if limit is not None and len(results) >= limit:
+                        if limit is not None and total_scraped >= limit:
                             break
                     
                     # Process batch immediately if callback provided
@@ -603,28 +608,19 @@ class HeadoutBookingScraper:
                         await on_page_complete(current_page + 1) # Next page index to start from
                     
                     # Check limit again to break outer loop if needed
-                    if limit is not None and len(results) >= limit:
+                    if limit is not None and total_scraped >= limit:
                         break
 
                     try:
-                        nav = page.locator('nav[aria-label="Pagination Navigation"] button')
-                        cnt = await nav.count()
-                        if cnt > 0:
-                            next_btn = page.locator('button[aria-label="Go to next page"], button[aria-label="Next page"], button[title="Next page"]')
-                            if await next_btn.count() > 0:
-                                await next_btn.first.click()
-                            else:
-                                next_text_btn = page.locator('button:has-text(">"), button:has-text("Next")').last
-                                if await next_text_btn.count() > 0:
-                                    await next_text_btn.click()
-                                else:
-                                    await nav.last.click()
-
-                            await page.wait_for_load_state("networkidle")
-                            await asyncio.sleep(5)  # INCREASED WAIT: Allocated time for page transition
-                        else:
+                        if not await self._goto_next_page(page):
                             break
-                    except Exception:
+                        import logging
+                        logging.getLogger("scraper_debug").info(
+                            f"Opened next Hub page ({total_scraped} bookings so far)"
+                        )
+                    except Exception as e:
+                        import logging
+                        logging.getLogger("scraper_debug").warning(f"Pagination stopped: {e}")
                         break
                     page_index += 1
                     current_page += 1
