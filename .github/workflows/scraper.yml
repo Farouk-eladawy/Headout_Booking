@@ -53,6 +53,7 @@ jobs:
         BROWSER_HEADLESS: "true"
         JOB_TYPE: ${{ github.event.inputs.job_type || 'scrape' }}
       run: |
+        echo "JOB_TYPE=$JOB_TYPE"
         if [ "$JOB_TYPE" = "repair" ]; then
           python repair_corrupt_bookings.py
         else

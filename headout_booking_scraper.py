@@ -83,7 +83,7 @@ class HeadoutBookingScraper:
     async def _set_filters(self, page: Page) -> None:
         await self._select_tab_booking_date(page)
 
-    async def _get_column_indices(self, page: Page) -> Dict[str, int]:
+    async def _get_column_indices(self, page: Page, cell_count: Optional[int] = None) -> Dict[str, int]:
         """Dynamically find column indices based on header text"""
         from headout_columns import DEFAULT_INDICES
 
@@ -100,11 +100,12 @@ class HeadoutBookingScraper:
             for i in range(count):
                 texts.append((await headers.nth(i).inner_text() or "").strip())
 
-            indices = match_column_indices(texts)
+            indices = match_column_indices(texts, cell_count=cell_count)
             
             import logging
             logger = logging.getLogger("scraper_debug")
             logger.info(f"Table headers: {texts}")
+            logger.info(f"Body cell count: {cell_count}")
             logger.info(f"Detected column indices: {indices}")
             
         except Exception:
@@ -115,11 +116,16 @@ class HeadoutBookingScraper:
     async def _extract_rows(self, page: Page) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
         
-        # Dynamically get indices
-        col_idx = await self._get_column_indices(page)
-        
         body_rows = page.locator("table tbody tr")
         count = await body_rows.count()
+        cell_count = None
+        if count > 0:
+            try:
+                cell_count = await body_rows.first.locator("td").count()
+            except Exception:
+                cell_count = None
+
+        col_idx = await self._get_column_indices(page, cell_count=cell_count)
         for i in range(count):
             tr = body_rows.nth(i)
             async def cell_text(n: int) -> str:
