@@ -11,7 +11,12 @@ from playwright.async_api import async_playwright, Page, BrowserContext
 from headout_config import HeadoutConfig
 from headout_airtable import HeadoutAirtableManager
 from headout_database import HeadoutDatabase
-from headout_columns import match_column_indices, row_looks_column_shifted
+from headout_columns import (
+    header_date_fields,
+    match_column_indices,
+    parse_booking_row_cells,
+    row_looks_column_shifted,
+)
 
 
 class HeadoutBookingScraper:
@@ -23,6 +28,7 @@ class HeadoutBookingScraper:
             base_id=self.cfg.get("AIRTABLE_BASE_ID"),
             table_name=self.cfg.get("AIRTABLE_TABLE", "Headout Bookings"),
         )
+        self._last_row_dates = {"booking_date": "", "experience_date": ""}
 
     async def _select_tab_booking_date(self, page: Page) -> None:
         import logging
@@ -45,26 +51,24 @@ class HeadoutBookingScraper:
                  tab = page.locator("text='By booking date'").first
             
             if await tab.count() > 0:
-                # Check if already active
-                class_attr = await tab.get_attribute("class") or ""
-                aria_selected = await tab.get_attribute("aria-selected")
-                
-                if "active" in class_attr.lower() or aria_selected == "true":
+                if "dateFilter=BOOKING" in (page.url or ""):
                     logger.info("'By Booking Date' tab is already active.")
                     return
 
                 logger.info("Clicking 'By Booking Date' tab...")
                 await tab.click(force=True)
-                
-                # Wait for loading state
+
+                try:
+                    await page.wait_for_url(re.compile(r"dateFilter=BOOKING"), timeout=10000)
+                except Exception:
+                    pass
                 try:
                     await page.wait_for_load_state("networkidle", timeout=5000)
                 except Exception:
                     pass
-                
-                # Explicit wait for table reload
-                await asyncio.sleep(3.0) 
-                logger.info("Tab switch completed.")
+
+                await asyncio.sleep(3.0)
+                logger.info(f"Tab switch completed. url={page.url}")
                 return
             else:
                 logger.warning("Could not find 'By Booking Date' tab selector. Dumping page content for debug.")
@@ -114,8 +118,17 @@ class HeadoutBookingScraper:
         return indices
 
     async def _extract_rows(self, page: Page) -> List[Dict[str, Any]]:
+        import logging
+        logger = logging.getLogger("scraper_debug")
         rows: List[Dict[str, Any]] = []
-        
+
+        headers_loc = page.locator("table thead th")
+        header_count = await headers_loc.count()
+        header_texts = []
+        for i in range(header_count):
+            header_texts.append((await headers_loc.nth(i).inner_text() or "").strip())
+        date_fields = header_date_fields(header_texts)
+
         body_rows = page.locator("table tbody tr")
         count = await body_rows.count()
         cell_count = None
@@ -125,29 +138,39 @@ class HeadoutBookingScraper:
             except Exception:
                 cell_count = None
 
-        col_idx = await self._get_column_indices(page, cell_count=cell_count)
+        await self._get_column_indices(page, cell_count=cell_count)
+        logger.info(f"Date field order: {date_fields}")
+
+        cell_counts: Dict[int, int] = {}
         for i in range(count):
             tr = body_rows.nth(i)
-            async def cell_text(n: int) -> str:
+            td_count = await tr.locator("td").count()
+            cell_counts[td_count] = cell_counts.get(td_count, 0) + 1
+            cells: List[str] = []
+            for j in range(td_count):
                 try:
-                    cell = tr.locator("td").nth(n - 1)
-                    return ((await cell.inner_text()) or "").strip()
+                    cells.append(((await tr.locator("td").nth(j).inner_text()) or "").strip())
                 except Exception:
-                    return ""
-            rows.append({
-                "row_index": i,
-                "booking_date": await cell_text(col_idx["booking_date"]),
-                "experience_date": await cell_text(col_idx["experience_date"]),
-                "time_slot": await cell_text(col_idx["time_slot"]),
-                "booking_id": await cell_text(col_idx["booking_id"]),
-                "experience_name": await cell_text(col_idx["experience_name"]),
-                "customer_name": await cell_text(col_idx["customer_name"]),
-                "pax_number": await cell_text(col_idx["pax_number"]),
-                "net_price": await cell_text(col_idx["net_price"]),
-                "retail_price": await cell_text(col_idx["retail_price"]),
-                "status": await cell_text(col_idx["status"]),
-                "additional_details": await cell_text(col_idx["additional_details"]),
-            })
+                    cells.append("")
+            parsed = parse_booking_row_cells(
+                cells,
+                date_fields=date_fields,
+                last_dates=self._last_row_dates,
+            )
+            if parsed.get("booking_date"):
+                self._last_row_dates["booking_date"] = parsed["booking_date"]
+            if parsed.get("experience_date"):
+                self._last_row_dates["experience_date"] = parsed["experience_date"]
+            parsed["row_index"] = i
+            if i == 0:
+                logger.info(
+                    "First row parse: "
+                    f"cells={td_count} booking_id={parsed.get('booking_id')!r} "
+                    f"experience_name={parsed.get('experience_name')!r} "
+                    f"status={parsed.get('status')!r}"
+                )
+            rows.append(parsed)
+        logger.info(f"Row cell counts: {cell_counts}")
         return rows
 
     def _normalize_booking(self, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
