@@ -74,3 +74,12 @@ jobs:
         
         # Commit and push if there are changes
         git diff --quiet && git diff --staged --quiet || (git commit -m "chore: Update scraper database state [skip ci]" && git push)
+
+    - name: Upload login debug dump
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scraper-debug
+        path: |
+          logs/
+        if-no-files-found: ignore

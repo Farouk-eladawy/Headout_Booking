@@ -450,49 +450,137 @@ class HeadoutBookingScraper:
         except Exception as e:
             pass
 
+    async def _dump_login_debug(self, page: Page) -> None:
+        import logging
+        logger = logging.getLogger("scraper_debug")
+        os.makedirs("logs", exist_ok=True)
+        try:
+            logger.error(f"Login debug URL: {page.url}")
+            with open("logs/debug_login.html", "w", encoding="utf-8") as f:
+                f.write(await page.content())
+        except Exception:
+            pass
+        try:
+            await page.screenshot(path="logs/debug_login.png", full_page=True)
+        except Exception:
+            pass
+
+    async def _first_visible(self, page: Page, selectors: List[str], timeout_ms: int = 8000):
+        deadline = time.time() + (timeout_ms / 1000.0)
+        last_error = None
+        while time.time() < deadline:
+            for sel in selectors:
+                loc = page.locator(sel).first
+                try:
+                    if await loc.count() > 0 and await loc.is_visible():
+                        return loc
+                except Exception as e:
+                    last_error = e
+            await asyncio.sleep(0.25)
+        if last_error:
+            raise last_error
+        return None
+
+    async def _click_first(self, page: Page, selectors: List[str], timeout_ms: int = 5000) -> bool:
+        loc = await self._first_visible(page, selectors, timeout_ms=timeout_ms)
+        if loc is None:
+            return False
+        await loc.click()
+        return True
+
+    async def _still_on_login(self, page: Page) -> bool:
+        url = (page.url or "").lower()
+        if "/login" in url or "/signin" in url:
+            return True
+        try:
+            heading = page.get_by_text("Sign in to your Headout Hub")
+            return await heading.count() > 0 and await heading.first.is_visible()
+        except Exception:
+            return False
+
     async def _login_if_needed(self, page: Page) -> None:
         import logging
         logger = logging.getLogger("scraper_debug")
-        
-        # Check if we are on login page
-        # URL contains 'login' or explicit login form presence
-        if "login" in page.url.lower() or await page.locator("input[name='email']").count() > 0:
-            logger.info("Login page detected. Attempting to log in...")
-            
-            email = self.cfg.email
-            password = self.cfg.password
-            
-            if not email or not password:
-                logger.error("Credentials not found in config! Cannot login.")
-                return
+
+        on_login = "login" in (page.url or "").lower()
+        if not on_login:
+            try:
+                on_login = await page.locator("input[name='email'], input[type='email']").count() > 0
+            except Exception:
+                on_login = False
+        if not on_login:
+            try:
+                heading = page.get_by_text("Sign in to your Headout Hub")
+                on_login = await heading.count() > 0 and await heading.first.is_visible()
+            except Exception:
+                on_login = False
+        if not on_login:
+            return
+
+        logger.info(f"Login page detected. url={page.url}")
+        email = self.cfg.email
+        password = self.cfg.password
+        if not email or not password:
+            await self._dump_login_debug(page)
+            raise RuntimeError("Credentials not found in config! Cannot login.")
+
+        email_selectors = [
+            "input[name='email']",
+            "input[type='email']",
+            "input[autocomplete='email']",
+            "#email",
+        ]
+        password_selectors = [
+            "input[name='password']",
+            "input[type='password']",
+            "input[autocomplete='current-password']",
+            "#password",
+        ]
+        continue_selectors = [
+            "button:has-text('Continue')",
+            "button[type='submit']",
+            "button:has-text('Next')",
+        ]
+        signin_selectors = [
+            "button[data-qa-marker='Sign in']",
+            "button:has-text('Sign in')",
+            "button:has-text('Log in')",
+            "button:has-text('Continue')",
+            "button[type='submit']",
+        ]
+
+        try:
+            email_box = await self._first_visible(page, email_selectors, timeout_ms=20000)
+            if email_box is None:
+                raise RuntimeError("Email field not visible on Headout login page")
+            await email_box.fill(email)
+            logger.info("Filled email.")
+
+            password_box = await self._first_visible(page, password_selectors, timeout_ms=3000)
+            if password_box is None:
+                logger.info("Password field not on first step. Clicking Continue...")
+                if not await self._click_first(page, continue_selectors, timeout_ms=8000):
+                    raise RuntimeError("Could not click Continue after email")
+                password_box = await self._first_visible(page, password_selectors, timeout_ms=20000)
+            if password_box is None:
+                raise RuntimeError("Password field not visible after email step")
+
+            await password_box.fill(password)
+            logger.info("Filled password. Submitting...")
+            if not await self._click_first(page, signin_selectors, timeout_ms=8000):
+                await password_box.press("Enter")
 
             try:
-                # Fill email
-                await page.fill("input[name='email']", email)
-                
-                # Fill password
-                await page.fill("input[name='password']", password)
-                
-                # Click Sign In
-                # Based on debug html: button[data-qa-marker="Sign in"]
-                btn = page.locator("button[data-qa-marker='Sign in']")
-                if await btn.count() > 0:
-                    await btn.click()
-                else:
-                    await page.click("button[type='submit']")
-                
-                logger.info("Credentials submitted. Waiting for navigation...")
-                await page.wait_for_load_state("networkidle")
-                
-                # Wait for dashboard specific element
-                try:
-                    await page.wait_for_url("**/dashboard/**", timeout=20000)
-                    logger.info("Successfully logged in.")
-                except Exception:
-                    logger.warning("Login might have failed or redirect is slow. Current URL: " + page.url)
-                    
-            except Exception as e:
-                logger.error(f"Login failed: {e}")
+                await page.wait_for_url("**/dashboard/**", timeout=45000)
+            except Exception:
+                pass
+            if await self._still_on_login(page):
+                raise RuntimeError(f"Still on login after submit. url={page.url}")
+            logger.info(f"Successfully logged in. url={page.url}")
+        except Exception as e:
+            logger.error(f"Login failed: {e}")
+            await self._dump_login_debug(page)
+            raise RuntimeError(f"Headout login failed: {e}") from e
 
     async def scrape(self, pages_limit: int = 2, start_page: int = 0, limit: Optional[int] = 20, on_batch_processed: Optional[Any] = None, on_page_complete: Optional[Any] = None) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
@@ -514,9 +602,8 @@ class HeadoutBookingScraper:
                 if not d:
                     continue
                 try:
-                    await page.goto(d, timeout=60000)
-                    await page.wait_for_load_state("networkidle")
-                    await asyncio.sleep(2)  # Extra wait for dynamic elements
+                    await page.goto(d, timeout=60000, wait_until="domcontentloaded")
+                    await asyncio.sleep(2)
                     break
                 except Exception:
                     continue
@@ -761,8 +848,7 @@ class HeadoutBookingScraper:
                     if not d:
                         continue
                     try:
-                        await page.goto(d, timeout=60000)
-                        await page.wait_for_load_state("networkidle")
+                        await page.goto(d, timeout=60000, wait_until="domcontentloaded")
                         await asyncio.sleep(2)
                         break
                     except Exception:
