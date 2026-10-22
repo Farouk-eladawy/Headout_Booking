@@ -490,13 +490,9 @@ class HeadoutBookingScraper:
 
     async def _still_on_login(self, page: Page) -> bool:
         url = (page.url or "").lower()
-        if "/login" in url or "/signin" in url:
-            return True
-        try:
-            heading = page.get_by_text("Sign in to your Headout Hub")
-            return await heading.count() > 0 and await heading.first.is_visible()
-        except Exception:
+        if "/dashboard" in url and "/login" not in url:
             return False
+        return "/login" in url or "/signin" in url
 
     async def _login_if_needed(self, page: Page) -> None:
         import logging
@@ -574,6 +570,7 @@ class HeadoutBookingScraper:
                 await page.wait_for_url("**/dashboard/**", timeout=45000)
             except Exception:
                 pass
+            await asyncio.sleep(1.0)
             if await self._still_on_login(page):
                 raise RuntimeError(f"Still on login after submit. url={page.url}")
             logger.info(f"Successfully logged in. url={page.url}")
